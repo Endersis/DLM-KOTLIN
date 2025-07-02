@@ -1,10 +1,15 @@
 package com.example.dlm.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.example.dlm.CameraActivity
 import com.example.dlm.R
 import com.example.dlm.SignupActivity
 import com.google.android.material.button.MaterialButton
@@ -17,6 +22,7 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var loginButton: MaterialButton
     private lateinit var googleLoginButton: MaterialButton
     private lateinit var signupButton: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_login)
@@ -45,9 +51,15 @@ class LoginActivity : AppCompatActivity() {
         }
 
         googleLoginButton.setOnClickListener {
-            // Por ahora, simulamos login con Google
-            Toast.makeText(this, "Login con Google", Toast.LENGTH_SHORT).show()
+            // PRUEBA: Ir directamente a la cámara con MediaPipe
+            Toast.makeText(this, "Abriendo cámara con MediaPipe", Toast.LENGTH_SHORT).show()
 
+            // Verificar permisos primero
+            if (checkCameraPermissions()) {
+                navigateToCamera()
+            } else {
+                requestCameraPermissions()
+            }
         }
 
         // Click en Signup
@@ -55,7 +67,6 @@ class LoginActivity : AppCompatActivity() {
             // Navegar a SignupActivity
             val intent = Intent(this, SignupActivity::class.java)
             startActivity(intent)
-
         }
     }
 
@@ -85,7 +96,44 @@ class LoginActivity : AppCompatActivity() {
         // Por ahora, simulamos un login exitoso
         Toast.makeText(this, "Login exitoso", Toast.LENGTH_SHORT).show()
 
+        // Después del login exitoso, podrías ir a la cámara:
+        // navigateToCamera()
     }
 
+    private fun checkCameraPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
 
+    private fun requestCameraPermissions() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO),
+            CAMERA_PERMISSION_REQUEST
+        )
+    }
+
+    private fun navigateToCamera() {
+        val intent = Intent(this, CameraActivity::class.java)
+        startActivity(intent)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                navigateToCamera()
+            } else {
+                Toast.makeText(this, "Se necesitan permisos de cámara y audio", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    companion object {
+        private const val CAMERA_PERMISSION_REQUEST = 100
+    }
 }

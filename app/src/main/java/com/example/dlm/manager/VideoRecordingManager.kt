@@ -1,3 +1,5 @@
+package com.example.dlm.managers
+
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
@@ -12,7 +14,18 @@ import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executor
+var currentLensFacing = CameraSelector.LENS_FACING_BACK
 
+private fun bindCameraUseCases(previewView: androidx.camera.view.PreviewView) {
+    // ... código existente ...
+
+    // Cambiar esta línea:
+    val cameraSelector = CameraSelector.Builder()
+        .requireLensFacing(currentLensFacing)
+        .build()
+
+    // ... resto del código ...
+}
 class VideoRecordingManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,

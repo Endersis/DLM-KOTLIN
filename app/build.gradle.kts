@@ -9,6 +9,9 @@ android {
     compileSdk = 35
 
     defaultConfig {
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
         applicationId = "com.example.dlm"
         minSdk = 24
         targetSdk = 35
@@ -37,10 +40,14 @@ android {
     buildFeatures {
         compose = true
     }
+    packagingOptions {
+        pickFirst("**/libc++_shared.so")
+        pickFirst("**/libtensorflowlite_jni.so")
+    }
 }
 
 dependencies {
-    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+
     implementation("androidx.camera:camera-core:1.3.0")
     implementation("androidx.camera:camera-camera2:1.3.0")
     implementation("androidx.camera:camera-lifecycle:1.3.0")
@@ -66,4 +73,5 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("com.google.mediapipe:tasks-vision:0.10.0")
 }
