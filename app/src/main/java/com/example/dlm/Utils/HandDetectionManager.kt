@@ -22,7 +22,7 @@ class HandDetectionManager(private val context: Context) {
     private var handLandmarker: HandLandmarker? = null
     private val _handsDetected = MutableStateFlow(false)
     val handsDetected: StateFlow<Boolean> = _handsDetected
-
+    var onHandLandmarksDetected: ((HandLandmarkerResult) -> Unit)? = null
     // Callback para cuando se detectan/dejan de detectar manos
     var onHandsDetectionChanged: ((Boolean) -> Unit)? = null
 
@@ -59,6 +59,11 @@ class HandDetectionManager(private val context: Context) {
         if (hasHands != _handsDetected.value) {
             _handsDetected.value = hasHands
             onHandsDetectionChanged?.invoke(hasHands)
+        }
+
+
+        if (hasHands) {
+            onHandLandmarksDetected?.invoke(result)
         }
     }
 
