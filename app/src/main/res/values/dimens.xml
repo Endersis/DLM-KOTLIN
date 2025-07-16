@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+    <!-- Anchos de las barras negras laterales REDUCIDAS -->
+    <dimen name="black_bar_width_portrait">150dp</dimen>
+    <dimen name="black_bar_width_landscape">120dp</dimen>
+</resources>
