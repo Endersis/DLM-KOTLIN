@@ -44,23 +44,15 @@
                     android:scaleType="fitCenter" />
 
                 <!-- Botón para iniciar cámara -->
-                <com.google.android.material.button.MaterialButton
+                <ImageButton
                     android:id="@+id/btnStartCamera"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
                     android:layout_marginBottom="24dp"
-                    android:textAllCaps="false"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:insetLeft="0dp"
-                    android:insetRight="0dp"
-                    android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    app:cornerRadius="20dp"
-                    app:icon="@drawable/ic_camera"
-                    app:iconSize="20dp"
-                    app:iconGravity="textStart"
-                    app:iconPadding="0dp" />
+                    android:background="@drawable/circular_button_background"
+                    android:src="@drawable/ic_camera"
+                    android:scaleType="center"
+                    android:contentDescription="Iniciar cámara" />
 
                 <!-- Botón para cambiar cámara -->
                 <ImageButton
@@ -128,7 +120,7 @@
                     android:textColor="@color/white"
                     android:textSize="14sp" />
 
-                <com.google.android.material.button.MaterialButton
+                <ImageButton
                     android:id="@+id/btnContinuePortrait"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="wrap_content"
