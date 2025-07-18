@@ -2,6 +2,6 @@
 
 <resources>
     <!-- Anchos de las barras negras laterales REDUCIDAS -->
-    <dimen name="black_bar_width_portrait">150dp</dimen>
-    <dimen name="black_bar_width_landscape">120dp</dimen>
+    <dimen name="black_bar_width_portrait">200dp</dimen>
+    <dimen name="black_bar_width_landscape">200dp</dimen>
 </resources>

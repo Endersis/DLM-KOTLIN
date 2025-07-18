@@ -76,4 +76,5 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation("com.google.mediapipe:tasks-vision:0.10.0")
+    
 }
