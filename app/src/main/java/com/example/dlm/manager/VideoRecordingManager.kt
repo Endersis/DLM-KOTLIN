@@ -16,86 +16,94 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
 
+/**
+ * Gestor de grabacion de video usando CameraX
+ * Maneja la captura, inicio, pausa y detencion de grabaciones de video
+ */
 class VideoRecordingManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val executor: ExecutorService
 ) {
+    // Componentes de CameraX para grabacion
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var recorder: Recorder? = null
 
+    // Estado observable de grabacion
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording
 
-    // Callbacks
+    // Callbacks para eventos de grabacion
     var onRecordingStarted: (() -> Unit)? = null
-    var onRecordingStopped: ((String) -> Unit)? = null
+    var onRecordingStopped: ((String) -> Unit)? = null  // Retorna la ruta del archivo
     var onRecordingError: ((String) -> Unit)? = null
 
     init {
-        Log.d(TAG, "🎬 VideoRecordingManager initialized")
         setupRecorder()
     }
 
+    /**
+     * Configura el grabador de video con calidad HD
+     * Prepara el VideoCapture para ser usado con la camara
+     */
     private fun setupRecorder() {
         try {
+            // Crear grabador con calidad HD
             recorder = Recorder.Builder()
                 .setQualitySelector(QualitySelector.from(Quality.HD))
                 .setExecutor(executor)
                 .build()
 
+            // Crear VideoCapture asociado al grabador
             videoCapture = VideoCapture.withOutput(recorder!!)
 
-            Log.d(TAG, "✅ Recorder setup completed")
-            Log.d(TAG, "- Recorder: $recorder")
-            Log.d(TAG, "- VideoCapture: $videoCapture")
-
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error setting up recorder", e)
-            onRecordingError?.invoke("Error setting up recorder: ${e.message}")
+            Log.e(TAG, "Error configurando grabador", e)
+            onRecordingError?.invoke("Error configurando grabador: ${e.message}")
         }
     }
 
+    /**
+     * Obtiene el VideoCapture para vincularlo con CameraX
+     * @return Instancia de VideoCapture configurada
+     * @throws IllegalStateException si VideoCapture no esta inicializado
+     */
     fun getVideoCapture(): VideoCapture<Recorder> {
-        return videoCapture ?: throw IllegalStateException("VideoCapture not initialized")
+        return videoCapture ?: throw IllegalStateException("VideoCapture no inicializado")
     }
 
+    /**
+     * Inicia una nueva grabacion de video
+     * Crea un archivo con timestamp y configura el audio si hay permisos
+     */
     fun startRecording() {
-        Log.d(TAG, "🎬 startRecording() called")
-        Log.d(TAG, "- Current state: ${_isRecording.value}")
-        Log.d(TAG, "- Recorder: $recorder")
-        Log.d(TAG, "- Active recording: $recording")
-
+        // Verificar que no hay grabacion activa
         if (_isRecording.value) {
-            Log.w(TAG, "⚠️ Already recording, ignoring start request")
             return
         }
 
+        // Verificar que el grabador esta inicializado
         if (recorder == null) {
-            Log.e(TAG, "❌ Recorder is null!")
-            onRecordingError?.invoke("Recorder not initialized")
+            Log.e(TAG, "Grabador no inicializado")
+            onRecordingError?.invoke("Grabador no inicializado")
             return
         }
 
         try {
-            // Create output file
+            // Crear archivo de salida con timestamp
             val fileName = "recording_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.mp4"
             val videoFile = File(context.getExternalFilesDir(null), fileName)
 
-            Log.d(TAG, "📁 Video will be saved to: ${videoFile.absolutePath}")
-
             val outputOptions = FileOutputOptions.Builder(videoFile).build()
 
-            // Check audio permission
+            // Verificar permiso de audio
             val hasAudioPermission = ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED
 
-            Log.d(TAG, "🎤 Audio permission: $hasAudioPermission")
-
-            // Prepare recording
+            // Preparar grabacion con o sin audio segun permisos
             val pendingRecording = recorder!!.prepareRecording(context, outputOptions)
                 .apply {
                     if (hasAudioPermission) {
@@ -103,137 +111,153 @@ class VideoRecordingManager(
                     }
                 }
 
-            // Start recording
+            // Iniciar grabacion con callbacks para eventos
             recording = pendingRecording.start(executor) { recordEvent ->
-                Log.d(TAG, "📹 Record event: ${recordEvent.javaClass.simpleName}")
-
-                when(recordEvent) {
-                    is VideoRecordEvent.Start -> {
-                        Log.d(TAG, "✅ Recording STARTED")
-                        _isRecording.value = true
-                        onRecordingStarted?.invoke()
-                    }
-
-                    is VideoRecordEvent.Pause -> {
-                        Log.d(TAG, "⏸️ Recording PAUSED")
-                    }
-
-                    is VideoRecordEvent.Resume -> {
-                        Log.d(TAG, "▶️ Recording RESUMED")
-                    }
-
-                    is VideoRecordEvent.Finalize -> {
-                        Log.d(TAG, "🏁 Recording FINALIZED")
-                        _isRecording.value = false
-
-                        if (!recordEvent.hasError()) {
-                            val outputUri = recordEvent.outputResults.outputUri
-                            Log.d(TAG, "✅ Recording saved successfully: $outputUri")
-                            onRecordingStopped?.invoke(videoFile.absolutePath)
-                        } else {
-                            val error = when (recordEvent.error) {
-                                VideoRecordEvent.Finalize.ERROR_ENCODING_FAILED -> "Encoding failed"
-                                VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED -> "File size limit reached"
-                                VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE -> "Insufficient storage"
-                                VideoRecordEvent.Finalize.ERROR_INVALID_OUTPUT_OPTIONS -> "Invalid output options"
-                                VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA -> "No valid data"
-                                VideoRecordEvent.Finalize.ERROR_RECORDER_ERROR -> "Recorder error"
-                                VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE -> "Source inactive"
-                                else -> "Unknown error: ${recordEvent.error}"
-                            }
-                            Log.e(TAG, "❌ Recording error: $error")
-                            onRecordingError?.invoke(error)
-                        }
-
-                        recording = null
-                    }
-
-                    is VideoRecordEvent.Status -> {
-                        val stats = recordEvent.recordingStats
-                        Log.v(TAG, "📊 Recording stats - Duration: ${stats.recordedDurationNanos / 1_000_000}ms, Size: ${stats.numBytesRecorded} bytes")
-                    }
-                }
+                handleRecordingEvent(recordEvent, videoFile)
             }
 
-            Log.d(TAG, "🎬 Recording started successfully, recording object: $recording")
-
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error starting recording", e)
+            Log.e(TAG, "Error iniciando grabacion", e)
             _isRecording.value = false
-            onRecordingError?.invoke("Failed to start recording: ${e.message}")
+            onRecordingError?.invoke("Error al iniciar grabacion: ${e.message}")
         }
     }
 
-    fun stopRecording() {
-        Log.d(TAG, "🛑 stopRecording() called")
-        Log.d(TAG, "- Current state: ${_isRecording.value}")
-        Log.d(TAG, "- Active recording: $recording")
+    /**
+     * Maneja los eventos de grabacion de video
+     * @param recordEvent Evento recibido del grabador
+     * @param videoFile Archivo donde se guarda el video
+     */
+    private fun handleRecordingEvent(recordEvent: VideoRecordEvent, videoFile: File) {
+        when(recordEvent) {
+            // Grabacion iniciada exitosamente
+            is VideoRecordEvent.Start -> {
+                _isRecording.value = true
+                onRecordingStarted?.invoke()
+            }
 
+            // Grabacion pausada
+            is VideoRecordEvent.Pause -> {
+                // No se usa actualmente
+            }
+
+            // Grabacion reanudada
+            is VideoRecordEvent.Resume -> {
+                // No se usa actualmente
+            }
+
+            // Grabacion finalizada
+            is VideoRecordEvent.Finalize -> {
+                _isRecording.value = false
+
+                if (!recordEvent.hasError()) {
+                    // Grabacion exitosa, notificar con la ruta del archivo
+                    onRecordingStopped?.invoke(videoFile.absolutePath)
+                } else {
+                    // Error durante la grabacion
+                    val error = getErrorMessage(recordEvent.error)
+                    Log.e(TAG, "Error en grabacion: $error")
+                    onRecordingError?.invoke(error)
+                }
+
+                recording = null
+            }
+
+            // Estadisticas de grabacion (opcional para debug)
+            is VideoRecordEvent.Status -> {
+                // Se puede usar para mostrar duracion o tamano del archivo
+            }
+        }
+    }
+
+    /**
+     * Convierte codigo de error en mensaje legible
+     * @param errorCode Codigo de error de VideoRecordEvent
+     * @return Mensaje descriptivo del error
+     */
+    private fun getErrorMessage(errorCode: Int): String {
+        return when (errorCode) {
+            VideoRecordEvent.Finalize.ERROR_ENCODING_FAILED -> "Fallo la codificacion"
+            VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED -> "Limite de tamano alcanzado"
+            VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE -> "Almacenamiento insuficiente"
+            VideoRecordEvent.Finalize.ERROR_INVALID_OUTPUT_OPTIONS -> "Opciones de salida invalidas"
+            VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA -> "Sin datos validos"
+            VideoRecordEvent.Finalize.ERROR_RECORDER_ERROR -> "Error del grabador"
+            VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE -> "Fuente inactiva"
+            else -> "Error desconocido: $errorCode"
+        }
+    }
+
+    /**
+     * Detiene la grabacion activa
+     * El video se guardara automaticamente
+     */
+    fun stopRecording() {
+        // Verificar que hay una grabacion activa
         if (!_isRecording.value || recording == null) {
-            Log.w(TAG, "⚠️ No active recording to stop")
             return
         }
 
         try {
             recording?.stop()
-            Log.d(TAG, "✅ Stop recording called successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error stopping recording", e)
-            onRecordingError?.invoke("Error stopping recording: ${e.message}")
+            Log.e(TAG, "Error deteniendo grabacion", e)
+            onRecordingError?.invoke("Error al detener grabacion: ${e.message}")
         }
 
         recording = null
     }
 
+    /**
+     * Pausa la grabacion activa
+     * Se puede reanudar posteriormente con resumeRecording()
+     */
     fun pauseRecording() {
-        Log.d(TAG, "⏸️ pauseRecording() called")
-
         if (!_isRecording.value || recording == null) {
-            Log.w(TAG, "⚠️ No active recording to pause")
             return
         }
 
         try {
             recording?.pause()
-            Log.d(TAG, "✅ Recording paused")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error pausing recording", e)
+            Log.e(TAG, "Error pausando grabacion", e)
         }
     }
 
+    /**
+     * Reanuda una grabacion pausada
+     */
     fun resumeRecording() {
-        Log.d(TAG, "▶️ resumeRecording() called")
-
         if (!_isRecording.value || recording == null) {
-            Log.w(TAG, "⚠️ No active recording to resume")
             return
         }
 
         try {
             recording?.resume()
-            Log.d(TAG, "✅ Recording resumed")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error resuming recording", e)
+            Log.e(TAG, "Error reanudando grabacion", e)
         }
     }
 
+    /**
+     * Libera todos los recursos del grabador
+     * Debe llamarse cuando se destruye la actividad
+     */
     fun release() {
-        Log.d(TAG, "🧹 Releasing VideoRecordingManager")
-
         try {
+            // Detener grabacion si esta activa
             if (_isRecording.value) {
                 stopRecording()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error stopping recording during release", e)
+            Log.e(TAG, "Error deteniendo grabacion durante liberacion", e)
         }
 
+        // Limpiar referencias
         recording = null
         recorder = null
         videoCapture = null
         _isRecording.value = false
-
-        Log.d(TAG, "✅ VideoRecordingManager released")
     }
 
     companion object {

@@ -1,6 +1,7 @@
 package com.example.dlm
 
 import android.Manifest
+import com.example.dlm.Utils.CombinedLandmarksResult
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -32,8 +33,13 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/**
+ * Actividad principal de la camara que maneja la deteccion de manos y grabacion de video
+ * Se encarga de coordinar la captura de video con la deteccion de landmarks de manos y pose
+ */
 class CameraActivity : AppCompatActivity() {
 
+    // Vistas de la interfaz de usuario
     private lateinit var previewView: PreviewView
     private lateinit var btnStartCamera: MaterialButton
     private lateinit var btnBack: android.widget.Button
@@ -47,10 +53,14 @@ class CameraActivity : AppCompatActivity() {
     private lateinit var orientationHint: LinearLayout
     private lateinit var leftBlackBar: View
     private lateinit var rightBlackBar: View
+
+    // Managers que controlan diferentes aspectos de la aplicacion
     private lateinit var recordingManager: RecordingManager
     private lateinit var handDetectionManager: HandDetectionManager
     private lateinit var videoRecordingManager: VideoRecordingManager
     private lateinit var cameraExecutor: ExecutorService
+
+    // Variables de configuracion y estado
     private var processingMode = VideoPostProcessor.ProcessingMode.HAND_LANDMARKS
     private var imageAnalysis: ImageAnalysis? = null
     private var isCameraStarted = false
@@ -58,11 +68,11 @@ class CameraActivity : AppCompatActivity() {
     private var cameraProvider: ProcessCameraProvider? = null
     private var userAcceptedPortrait = false
 
-    // Variables para control de estado
+    // Variables para control de estado de deteccion
     private var lastHandsDetected = false
     private var isProcessingRecordingChange = false
 
-    // Launcher para permisos
+    // Launcher para solicitar permisos de camara y audio
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -78,14 +88,12 @@ class CameraActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_camera)
 
-        Log.d("SIMPLE_DEBUG", "🚀 CameraActivity onCreate")
-
         initViews()
         initManagers()
         setupClickListeners()
         checkOrientation()
 
-        // Verificar permisos
+        // Verificar y solicitar permisos si es necesario
         if (allPermissionsGranted()) {
             setupCamera()
         } else {
@@ -93,6 +101,9 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Inicializa todas las vistas de la interfaz de usuario
+     */
     private fun initViews() {
         previewView = findViewById(R.id.previewView)
         btnStartCamera = findViewById(R.id.btnStartCamera)
@@ -109,9 +120,10 @@ class CameraActivity : AppCompatActivity() {
         rightBlackBar = findViewById(R.id.rightBlackBar)
     }
 
+    /**
+     * Inicializa los managers que controlan la deteccion de manos, grabacion de video y procesamiento
+     */
     private fun initManagers() {
-        Log.d("SIMPLE_DEBUG", "⚙️ Initializing managers...")
-
         cameraExecutor = Executors.newSingleThreadExecutor()
         handDetectionManager = HandDetectionManager(this)
         videoRecordingManager = VideoRecordingManager(this, this, cameraExecutor)
@@ -120,52 +132,55 @@ class CameraActivity : AppCompatActivity() {
         setupCallbacks()
         observeStates()
         setupRecordingManagerCallbacks()
-
-        Log.d("SIMPLE_DEBUG", "✅ Managers initialized")
     }
 
+    /**
+     * Configura los callbacks del RecordingManager para procesar landmarks detectados
+     */
     private fun setupRecordingManagerCallbacks() {
-        Log.d("SIMPLE_DEBUG", "🔗 Setting up recording manager callbacks...")
+        // Callback para resultados combinados (manos + pose)
+        handDetectionManager.onCombinedLandmarksDetected = { combinedResult ->
+            recordingManager.addCombinedLandmarks(combinedResult)
+        }
 
-        // Conectar HandDetectionManager con RecordingManager
+        // Callback de solo manos como respaldo
         handDetectionManager.onHandLandmarksDetected = { result ->
             recordingManager.addHandLandmarks(result)
         }
 
-        // Callbacks del RecordingManager
-        recordingManager.onRecordingStateChanged = { state ->
-            Log.d("SIMPLE_DEBUG", "📊 RecordingManager state: $state")
-        }
-
+        // Callback cuando el procesamiento de video termina
         recordingManager.onProcessingCompleted = { result ->
             runOnUiThread {
                 if (result.success) {
-                    Toast.makeText(this, "✅ ${result.message}", Toast.LENGTH_LONG).show()
-                    Log.d("SIMPLE_DEBUG", "✅ Processing completed successfully")
+                    Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
 
-                    // Mostrar sugerencia para ver archivos
+                    // Informar al usuario sobre los archivos generados
+                    val dataInfo = if (result.message.contains("torso/brazos")) {
+                        "con detección completa de cuerpo"
+                    } else {
+                        "solo con detección de manos"
+                    }
+
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                         Toast.makeText(
                             this,
-                            "💡 Toca 'Ver archivos' para revisar los archivos generados",
+                            "Archivos generados $dataInfo. Toca 'Ver archivos' para revisar.",
                             Toast.LENGTH_LONG
                         ).show()
                     }, 2000)
 
                 } else {
-                    Toast.makeText(this, "❌ Error: ${result.message}", Toast.LENGTH_LONG).show()
-                    Log.e("SIMPLE_DEBUG", "❌ Processing failed: ${result.message}")
+                    Toast.makeText(this, "Error: ${result.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
-
-        Log.d("SIMPLE_DEBUG", "✅ Recording manager callbacks configured")
     }
 
+    /**
+     * Configura los callbacks para la deteccion de manos y grabacion de video
+     */
     private fun setupCallbacks() {
-        Log.d("SIMPLE_DEBUG", "🔗 Setting up detection callbacks...")
-
-        // Callback cuando cambia la detección de manos
+        // Callback cuando cambia la deteccion de manos
         handDetectionManager.onHandsDetectionChanged = { handsDetected ->
             runOnUiThread {
                 // Solo procesar si hay un cambio real en el estado
@@ -173,78 +188,73 @@ class CameraActivity : AppCompatActivity() {
                     isProcessingRecordingChange = true
                     lastHandsDetected = handsDetected
 
-                    Log.d("SIMPLE_DEBUG", "🖐️ Hand detection changed to: $handsDetected")
-
                     if (handsDetected) {
                         handleHandsDetected()
                     } else {
                         handleHandsLost()
                     }
 
-                    // Reset el flag después de un delay más largo
+                    // Reset el flag despues de un delay para evitar cambios muy rapidos
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                         isProcessingRecordingChange = false
-                    }, 1000) // 1 segundo para evitar cambios rápidos
+                    }, 200)
                 }
             }
         }
 
-        // Video recording callbacks
+        // Callbacks de grabacion de video
         videoRecordingManager.onRecordingStarted = {
             runOnUiThread {
-                Log.d("VIDEO_RECORD_DEBUG", "🎉 VIDEO RECORDING STARTED CALLBACK FIRED!")
                 updateRecordingUI(true)
-                Toast.makeText(this, "🔴 Grabación iniciada", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Grabación iniciada", Toast.LENGTH_SHORT).show()
             }
         }
 
         videoRecordingManager.onRecordingStopped = { videoPath ->
             runOnUiThread {
-                Log.d("VIDEO_RECORD_DEBUG", "🎬 VIDEO RECORDING STOPPED: $videoPath")
                 updateRecordingUI(false)
 
                 val videoUri = Uri.fromFile(File(videoPath))
                 recordingManager.stopRecording(videoUri)
 
-                Toast.makeText(this, "📹 Procesando video...", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Procesando video...", Toast.LENGTH_LONG).show()
             }
         }
 
         videoRecordingManager.onRecordingError = { error ->
             runOnUiThread {
-                Log.e("VIDEO_RECORD_DEBUG", "❌ VIDEO RECORDING ERROR: $error")
                 updateRecordingUI(false)
                 updateHandUI(false)
-                Toast.makeText(this, "❌ Error de grabación: $error", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Error de grabación: $error", Toast.LENGTH_SHORT).show()
 
-                // Reset states on error
+                // Resetear estados en caso de error
                 isProcessingRecordingChange = false
                 lastHandsDetected = false
             }
         }
-
-        Log.d("SIMPLE_DEBUG", "✅ Detection callbacks configured")
     }
 
+    /**
+     * Maneja cuando se detectan manos en el frame
+     * Inicia la grabacion de video y el registro de landmarks
+     */
     private fun handleHandsDetected() {
         updateHandUI(true)
 
-        // Verificar que podemos iniciar la grabación
+        // Verificar que se puede iniciar la grabacion
         if (canStartRecording()) {
-            Log.d("SIMPLE_DEBUG", "🎬 Starting recording process...")
-
             lifecycleScope.launch {
                 try {
                     // Iniciar ambos managers de forma secuencial
                     recordingManager.startRecording()
 
-                    // Pequeño delay para asegurar que el estado se actualice
-                    delay(100)
+                    // Pequeno delay para asegurar que el estado se actualice
+                    delay(50)
 
                     videoRecordingManager.startRecording()
 
                 } catch (e: Exception) {
-                    Log.e("SIMPLE_DEBUG", "❌ Error starting recording", e)
+                    Log.e("CameraActivity", "Error starting recording", e)
                     Toast.makeText(this@CameraActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
 
                     // Resetear estados en caso de error
@@ -254,61 +264,59 @@ class CameraActivity : AppCompatActivity() {
                     lastHandsDetected = false
                 }
             }
-        } else {
-            Log.d("SIMPLE_DEBUG", "⚠️ Cannot start recording - conditions not met")
         }
     }
 
+    /**
+     * Maneja cuando se dejan de detectar manos
+     * Detiene la grabacion de video
+     */
     private fun handleHandsLost() {
         updateHandUI(false)
 
         if (videoRecordingManager.isRecording.value) {
-            Log.d("SIMPLE_DEBUG", "🛑 Stopping recording process...")
-
             lifecycleScope.launch {
                 try {
                     videoRecordingManager.stopRecording()
                 } catch (e: Exception) {
-                    Log.e("SIMPLE_DEBUG", "❌ Error stopping recording", e)
+                    Log.e("CameraActivity", "Error stopping recording", e)
                     Toast.makeText(this@CameraActivity, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
     }
 
+    /**
+     * Verifica si se cumplen todas las condiciones para iniciar la grabacion
+     */
     private fun canStartRecording(): Boolean {
-        val canStart = allPermissionsGranted() &&
+        return allPermissionsGranted() &&
                 isCameraStarted &&
                 cameraProvider != null &&
                 !videoRecordingManager.isRecording.value &&
                 !recordingManager.isRecording()
-
-        Log.d("SIMPLE_DEBUG", "Can start recording check: $canStart")
-        Log.d("SIMPLE_DEBUG", "- Permissions: ${allPermissionsGranted()}")
-        Log.d("SIMPLE_DEBUG", "- Camera started: $isCameraStarted")
-        Log.d("SIMPLE_DEBUG", "- Camera provider: ${cameraProvider != null}")
-        Log.d("SIMPLE_DEBUG", "- Video not recording: ${!videoRecordingManager.isRecording.value}")
-        Log.d("SIMPLE_DEBUG", "- Recording manager idle: ${!recordingManager.isRecording()}")
-
-        return canStart
     }
 
+    /**
+     * Observa los cambios de estado de los managers
+     */
     private fun observeStates() {
         lifecycleScope.launch {
             handDetectionManager.handsDetected.collect { handsDetected ->
-                // UI updates only, main logic is in onHandsDetectionChanged callback
                 updateHandUI(handsDetected)
             }
         }
 
         lifecycleScope.launch {
             videoRecordingManager.isRecording.collect { isRecording ->
-                Log.d("SIMPLE_DEBUG", "📊 Video recording state observed: $isRecording")
                 updateRecordingUI(isRecording)
             }
         }
     }
 
+    /**
+     * Configura el proveedor de camara
+     */
     private fun setupCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
@@ -318,6 +326,9 @@ class CameraActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    /**
+     * Vincula los casos de uso de la camara (preview, analisis de imagen, captura de video)
+     */
     private fun bindCameraUseCases() {
         val cameraProvider = cameraProvider ?: return
 
@@ -348,32 +359,28 @@ class CameraActivity : AppCompatActivity() {
                 videoCapture
             )
 
-            // Pasar la cámara al VideoRecordingManager (si es necesario)
-            // videoRecordingManager.setCamera(camera)
-
-            Log.d("SIMPLE_DEBUG", "✅ Camera use cases bound successfully with VideoCapture")
-
         } catch (e: Exception) {
-            Log.e("SIMPLE_DEBUG", "❌ Error binding camera use cases", e)
             Toast.makeText(this, "Error al iniciar la cámara: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
+    /**
+     * Inicia la deteccion de manos usando el analizador de imagenes
+     */
     private fun startHandDetection() {
-        Log.d("SIMPLE_DEBUG", "🚀 Starting hand detection...")
-
         imageAnalysis?.setAnalyzer(cameraExecutor) { imageProxy ->
             handDetectionManager.detectHands(imageProxy)
         }
 
         isCameraStarted = true
         btnStartCamera.text = "Detener"
-        Toast.makeText(this, "🖐️ Detección iniciada - Muestra tus manos", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Detección iniciada - Muestra tus manos", Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * Detiene la deteccion de manos y limpia los recursos
+     */
     private fun stopHandDetection() {
-        Log.d("SIMPLE_DEBUG", "🛑 Stopping hand detection...")
-
         imageAnalysis?.clearAnalyzer()
 
         if (videoRecordingManager.isRecording.value) {
@@ -385,11 +392,14 @@ class CameraActivity : AppCompatActivity() {
         updateHandUI(false)
         updateRecordingUI(false)
 
-        // Reset control variables
+        // Reset variables de control
         lastHandsDetected = false
         isProcessingRecordingChange = false
     }
 
+    /**
+     * Actualiza la UI para mostrar el estado de deteccion de manos
+     */
     private fun updateHandUI(handsDetected: Boolean) {
         handStatus.text = if (handsDetected) "Manos detectadas" else "Sin manos"
         handIndicator.setBackgroundResource(
@@ -397,10 +407,16 @@ class CameraActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * Actualiza la UI para mostrar el estado de grabacion
+     */
     private fun updateRecordingUI(isRecording: Boolean) {
         recordingIndicator.visibility = if (isRecording) View.VISIBLE else View.INVISIBLE
     }
 
+    /**
+     * Cambia entre camara frontal y trasera
+     */
     private fun switchCamera() {
         lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
             CameraSelector.LENS_FACING_FRONT
@@ -425,69 +441,9 @@ class CameraActivity : AppCompatActivity() {
         Toast.makeText(this, "Cámara $cameraType", Toast.LENGTH_SHORT).show()
     }
 
-    private fun showFilesInLogs() {
-        Log.d("SIMPLE_DEBUG", "📁 Checking files...")
-
-        try {
-            val appDir = getExternalFilesDir(null)
-            if (appDir == null || !appDir.exists()) {
-                Toast.makeText(this, "📁 No se puede acceder al directorio", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val files = appDir.listFiles()
-            if (files == null) {
-                Toast.makeText(this, "📁 No se puede leer el directorio", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            // Listar TODOS los archivos
-            Log.d("FILES_DEBUG", "🔍 ===== ALL FILES =====")
-            files.forEach { file ->
-                Log.d("FILES_DEBUG", "📄 ${file.name} (${file.length()} bytes)")
-            }
-            Log.d("FILES_DEBUG", "=======================")
-
-            val generatedFiles = files.filter { file ->
-                (file.name.startsWith("hand_landmarks_") && file.name.endsWith(".txt")) ||
-                        (file.name.startsWith("frame_") && file.name.endsWith(".jpg")) ||
-                        file.name.endsWith(".mp4")
-            }
-
-            if (generatedFiles.isEmpty()) {
-                Toast.makeText(this, "📁 No hay archivos generados aún", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            Log.d("FILES_DEBUG", "🎉 ===== GENERATED FILES =====")
-            generatedFiles.forEachIndexed { index, file ->
-                val type = when {
-                    file.name.endsWith(".txt") -> "📝 TXT"
-                    file.name.endsWith(".jpg") -> "🖼️ JPG"
-                    file.name.endsWith(".mp4") -> "🎬 MP4"
-                    else -> "📄 FILE"
-                }
-                Log.d("FILES_DEBUG", "[$index] $type ${file.name} (${file.length() / 1024}KB)")
-                Log.d("FILES_DEBUG", "    📍 ${file.absolutePath}")
-            }
-            Log.d("FILES_DEBUG", "=============================")
-
-            val txtFiles = generatedFiles.count { it.name.endsWith(".txt") }
-            val jpgFiles = generatedFiles.count { it.name.endsWith(".jpg") }
-            val mp4Files = generatedFiles.count { it.name.endsWith(".mp4") }
-
-            Toast.makeText(
-                this,
-                "📁 Archivos: ${txtFiles} TXT, ${jpgFiles} JPG, ${mp4Files} MP4",
-                Toast.LENGTH_LONG
-            ).show()
-
-        } catch (e: Exception) {
-            Log.e("SIMPLE_DEBUG", "❌ Error checking files", e)
-            Toast.makeText(this, "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
+    /**
+     * Configura los listeners de los botones
+     */
     private fun setupClickListeners() {
         btnStartCamera.setOnClickListener {
             if (!isCameraStarted) {
@@ -512,13 +468,12 @@ class CameraActivity : AppCompatActivity() {
         }
 
         btnViewFiles.setOnClickListener {
-            Log.d("SIMPLE_DEBUG", "📁 View files clicked")
             // Abrir la actividad de archivos
             val intent = Intent(this, FilesActivity::class.java)
             startActivity(intent)
         }
 
-        // Mode indicator
+        // Indicador de modo para cambiar entre landmarks y frames
         findViewById<LinearLayout>(R.id.modeIndicator)?.setOnClickListener {
             showModeSelectionDialog()
         }
@@ -531,9 +486,12 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Muestra dialogo para cambiar el modo de procesamiento (landmarks o frames)
+     */
     private fun showModeSelectionDialog() {
         if (isCameraStarted) {
-            Toast.makeText(this, "⚠️ Detén la detección primero", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Detén la detección primero", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -549,16 +507,18 @@ class CameraActivity : AppCompatActivity() {
 
         val modeText = findViewById<TextView>(R.id.modeText)
         val newText = if (newMode == VideoPostProcessor.ProcessingMode.HAND_LANDMARKS) {
-            "📝 Landmarks"
+            "Landmarks"
         } else {
-            "🎞️ Frames"
+            "Frames"
         }
         modeText?.text = newText
 
-        Toast.makeText(this, "⚙️ Modo: $newText", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Modo: $newText", Toast.LENGTH_SHORT).show()
     }
 
-    // Métodos de orientación sin cambios
+    /**
+     * Verifica la orientacion del dispositivo y muestra avisos si es necesario
+     */
     private fun checkOrientation() {
         val orientation = resources.configuration.orientation
         if (orientation == Configuration.ORIENTATION_PORTRAIT && !userAcceptedPortrait) {
@@ -574,6 +534,9 @@ class CameraActivity : AppCompatActivity() {
         adjustBlackBars(orientation)
     }
 
+    /**
+     * Ajusta el tamano de las barras negras laterales segun la orientacion
+     */
     private fun adjustBlackBars(orientation: Int) {
         val barWidth = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
             (170 * resources.displayMetrics.density).toInt()
@@ -595,26 +558,41 @@ class CameraActivity : AppCompatActivity() {
         previewView.layoutParams = previewParams
     }
 
+    /**
+     * Muestra overlay de advertencia de orientacion
+     */
     private fun showOrientationOverlay() {
         orientationOverlay.visibility = View.VISIBLE
         btnStartCamera.isEnabled = false
         btnSwitchCamera.isEnabled = false
     }
 
+    /**
+     * Oculta overlay de advertencia de orientacion
+     */
     private fun hideOrientationOverlay() {
         orientationOverlay.visibility = View.GONE
         btnStartCamera.isEnabled = true
         btnSwitchCamera.isEnabled = true
     }
 
+    /**
+     * Muestra hint de orientacion
+     */
     private fun showOrientationHint() {
         orientationHint.visibility = View.VISIBLE
     }
 
+    /**
+     * Oculta hint de orientacion
+     */
     private fun hideOrientationHint() {
         orientationHint.visibility = View.GONE
     }
 
+    /**
+     * Maneja cambios de configuracion del dispositivo
+     */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         checkOrientation()
@@ -625,20 +603,25 @@ class CameraActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Verifica si todos los permisos necesarios estan otorgados
+     */
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Limpia recursos cuando se destruye la actividad
+     */
     override fun onDestroy() {
         super.onDestroy()
-        Log.d("SIMPLE_DEBUG", "🧹 Destroying CameraActivity")
 
         try {
             if (videoRecordingManager.isRecording.value) {
                 videoRecordingManager.stopRecording()
             }
         } catch (e: Exception) {
-            Log.e("SIMPLE_DEBUG", "❌ Error stopping recording on destroy", e)
+            Log.e("CameraActivity", "Error stopping recording on destroy", e)
         }
 
         cameraExecutor.shutdown()
@@ -648,6 +631,7 @@ class CameraActivity : AppCompatActivity() {
     }
 
     companion object {
+        // Permisos requeridos para el funcionamiento de la aplicacion
         private val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO

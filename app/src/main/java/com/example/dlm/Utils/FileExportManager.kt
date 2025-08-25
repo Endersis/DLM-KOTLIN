@@ -133,7 +133,6 @@ class FileExportManager(private val context: Context) {
 
     /**
      * Abre el explorador de archivos en la carpeta donde se guardaron los archivos
-     * Se ha modificado para usar FileProvider para generar una URI segura para la carpeta.
      */
     fun openFileExplorer(exportPath: String) {
         try {
@@ -160,12 +159,10 @@ class FileExportManager(private val context: Context) {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            // Intentar iniciar la actividad con el intent de ver carpeta
             if (intent.resolveActivity(context.packageManager) != null) {
                 context.startActivity(intent)
             } else {
-                // Fallback: Si no hay una app que maneje "vnd.android.document/directory",
-                // intentar abrir un selector de archivos genérico.
+
                 val fallbackIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
                     type = "*/*" // Permite seleccionar cualquier tipo de archivo
                     addCategory(Intent.CATEGORY_OPENABLE)
@@ -185,13 +182,13 @@ class FileExportManager(private val context: Context) {
         val files = mutableListOf<GeneratedFile>()
 
         try {
-            // Obtener el directorio de archivos internos de la app
             val appDir = context.getExternalFilesDir(null) ?: return emptyList()
 
-            // Listar archivos y categorizarlos
             appDir.listFiles()?.forEach { file ->
                 when {
-                    file.name.startsWith("hand_landmarks_") && file.name.endsWith(".txt") -> {
+                    (file.name.startsWith("hand_landmarks_") ||
+                            file.name.startsWith("combined_landmarks_")) &&
+                            file.name.endsWith(".txt") -> {
                         files.add(
                             GeneratedFile(
                                 path = file.absolutePath,
@@ -240,18 +237,18 @@ class FileExportManager(private val context: Context) {
         val infoFile = File(exportDir, "info.txt")
         infoFile.writeText(
             """
-            DLM Export Information
+            DLM Informacion de exportacion
             =====================
-            Export Date: ${Date()}
-            Processing Mode: ${mode.name}
-            Files Count: $filesCount
+            Fecha de exportacion: ${Date()}
+            Modo de procesamiento: ${mode.name}
+            
             
             Description:
             ${when (mode) {
                 VideoPostProcessor.ProcessingMode.HAND_LANDMARKS ->
-                    "Hand landmarks data extracted from video recording"
+                    "Hand landmarks datos extraidos"
                 VideoPostProcessor.ProcessingMode.VIDEO_FRAMES ->
-                    "10 frames extracted from video recording with timestamps"
+                    "10 frames extraidos"
             }}
             
             App: DLM (Deep Learning Model)

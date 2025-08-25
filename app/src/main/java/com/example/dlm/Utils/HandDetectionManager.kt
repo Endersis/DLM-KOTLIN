@@ -9,10 +9,13 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
@@ -20,19 +23,52 @@ import java.io.ByteArrayOutputStream
 class HandDetectionManager(private val context: Context) {
 
     private var handLandmarker: HandLandmarker? = null
+    private var poseLandmarker: PoseLandmarker? = null
+
     private val _handsDetected = MutableStateFlow(false)
     val handsDetected: StateFlow<Boolean> = _handsDetected
+
+    // Almacenar los últimos resultados de cada detector
+    private var lastHandResult: HandLandmarkerResult? = null
+    private var lastPoseResult: PoseLandmarkerResult? = null
+    private var lastTimestamp: Long = 0
+
+    // Callbacks combinados
     var onHandLandmarksDetected: ((HandLandmarkerResult) -> Unit)? = null
-    // Callback para cuando se detectan/dejan de detectar manos
+    var onCombinedLandmarksDetected: ((CombinedLandmarksResult) -> Unit)? = null
     var onHandsDetectionChanged: ((Boolean) -> Unit)? = null
+
+    // Índices de puntos de pose que queremos capturar (torso y brazos)
+    companion object {
+        // Puntos del torso y brazos según MediaPipe Pose
+        val TORSO_ARM_INDICES = listOf(
+            11, 12, // Hombros (izquierdo y derecho)
+            13, 14, // Codos (izquierdo y derecho)
+            15, 16, // Muñecas (izquierdo y derecho)
+            23, 24  // Caderas (izquierdo y derecho) - parte del torso
+        )
+
+        val POSE_POINT_NAMES = mapOf(
+            11 to "Hombro Izquierdo",
+            12 to "Hombro Derecho",
+            13 to "Codo Izquierdo",
+            14 to "Codo Derecho",
+            15 to "Muñeca Izquierda",
+            16 to "Muñeca Derecha",
+            23 to "Cadera Izquierda",
+            24 to "Cadera Derecha"
+
+        )
+    }
 
     init {
         setupHandLandmarker()
+        setupPoseLandmarker()
     }
 
     private fun setupHandLandmarker() {
         val baseOptions = BaseOptions.builder()
-            .setModelAssetPath("hand_landmarker.task") // Descarga el modelo de MediaPipe
+            .setModelAssetPath("hand_landmarker.task")
             .build()
 
         val options = HandLandmarker.HandLandmarkerOptions.builder()
@@ -43,7 +79,7 @@ class HandDetectionManager(private val context: Context) {
             .setNumHands(2) // Detectar hasta 2 manos
             .setRunningMode(RunningMode.LIVE_STREAM)
             .setResultListener { result, image ->
-                handleDetectionResult(result)
+                handleHandDetectionResult(result)
             }
             .setErrorListener { error ->
                 error.printStackTrace()
@@ -53,7 +89,32 @@ class HandDetectionManager(private val context: Context) {
         handLandmarker = HandLandmarker.createFromOptions(context, options)
     }
 
-    private fun handleDetectionResult(result: HandLandmarkerResult) {
+    private fun setupPoseLandmarker() {
+        val baseOptions = BaseOptions.builder()
+            .setModelAssetPath("pose_landmarker_full.task")
+            .build()
+
+        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
+            .setBaseOptions(baseOptions)
+            .setMinPoseDetectionConfidence(0.5f)
+            .setMinTrackingConfidence(0.5f)
+            .setMinPosePresenceConfidence(0.5f)
+            .setNumPoses(1) // Solo detectar una persona
+            .setRunningMode(RunningMode.LIVE_STREAM)
+            .setResultListener { result, image ->
+                handlePoseDetectionResult(result)
+            }
+            .setErrorListener { error ->
+                error.printStackTrace()
+            }
+            .build()
+
+        poseLandmarker = PoseLandmarker.createFromOptions(context, options)
+    }
+
+    private fun handleHandDetectionResult(result: HandLandmarkerResult) {
+        lastHandResult = result
+
         val hasHands = result.landmarks().isNotEmpty()
 
         if (hasHands != _handsDetected.value) {
@@ -61,14 +122,32 @@ class HandDetectionManager(private val context: Context) {
             onHandsDetectionChanged?.invoke(hasHands)
         }
 
-
         if (hasHands) {
             onHandLandmarksDetected?.invoke(result)
+            // Combinar con resultado de pose si está disponible y es del mismo frame
+            combineResultsIfReady()
+        }
+    }
+
+    private fun handlePoseDetectionResult(result: PoseLandmarkerResult) {
+        lastPoseResult = result
+        // Combinar con resultado de manos si está disponible
+        combineResultsIfReady()
+    }
+
+    private fun combineResultsIfReady() {
+        if (lastHandResult != null && lastPoseResult != null) { // Quita el && _handsDetected.value
+            val combinedResult = CombinedLandmarksResult(
+                handLandmarksResult = lastHandResult!!,
+                poseLandmarksResult = lastPoseResult!!,
+                timestamp = lastTimestamp
+            )
+            onCombinedLandmarksDetected?.invoke(combinedResult)
         }
     }
 
     fun detectHands(imageProxy: ImageProxy) {
-        val frameTime = System.currentTimeMillis()
+        lastTimestamp = System.currentTimeMillis()
 
         // Convertir ImageProxy a Bitmap
         val bitmap = imageProxy.toBitmap()
@@ -79,8 +158,9 @@ class HandDetectionManager(private val context: Context) {
         // Crear MPImage
         val mpImage = BitmapImageBuilder(rotatedBitmap).build()
 
-        // Detectar
-        handLandmarker?.detectAsync(mpImage, frameTime)
+        // Detectar manos y pose en paralelo
+        handLandmarker?.detectAsync(mpImage, lastTimestamp)
+        poseLandmarker?.detectAsync(mpImage, lastTimestamp)
 
         imageProxy.close()
     }
@@ -133,5 +213,14 @@ class HandDetectionManager(private val context: Context) {
     fun release() {
         handLandmarker?.close()
         handLandmarker = null
+        poseLandmarker?.close()
+        poseLandmarker = null
     }
 }
+
+// Clase de datos para combinar resultados de manos y pose
+data class CombinedLandmarksResult(
+    val handLandmarksResult: HandLandmarkerResult,
+    val poseLandmarksResult: PoseLandmarkerResult,
+    val timestamp: Long
+)
