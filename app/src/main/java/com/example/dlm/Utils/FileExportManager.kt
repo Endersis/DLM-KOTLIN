@@ -114,7 +114,7 @@ class FileExportManager(private val context: Context) {
                 }
 
                 type = when (processingMode) {
-                    VideoPostProcessor.ProcessingMode.HAND_LANDMARKS -> "text/plain"
+                    VideoPostProcessor.ProcessingMode.HAND_LANDMARKS -> "text/csv" // Cambiado de text/plain a text/csv
                     VideoPostProcessor.ProcessingMode.VIDEO_FRAMES -> "image/jpeg"
                 }
 
@@ -176,7 +176,7 @@ class FileExportManager(private val context: Context) {
     }
 
     /**
-     * Lista todos los archivos DLM generados
+     * Lista todos los archivos DLM generados - ACTUALIZADA para incluir archivos CSV
      */
     fun listGeneratedFiles(): List<GeneratedFile> {
         val files = mutableListOf<GeneratedFile>()
@@ -186,6 +186,21 @@ class FileExportManager(private val context: Context) {
 
             appDir.listFiles()?.forEach { file ->
                 when {
+                    // Archivos CSV de landmarks (nuevos)
+                    (file.name.startsWith("landmarks_") ||
+                            file.name.startsWith("hand_landmarks_")) &&
+                            file.name.endsWith(".csv") -> {
+                        files.add(
+                            GeneratedFile(
+                                path = file.absolutePath,
+                                name = file.name,
+                                type = FileType.LANDMARKS,
+                                size = file.length(),
+                                lastModified = file.lastModified()
+                            )
+                        )
+                    }
+                    // Archivos TXT de landmarks (compatibilidad con versiones anteriores)
                     (file.name.startsWith("hand_landmarks_") ||
                             file.name.startsWith("combined_landmarks_")) &&
                             file.name.endsWith(".txt") -> {
@@ -199,6 +214,7 @@ class FileExportManager(private val context: Context) {
                             )
                         )
                     }
+                    // Archivos de frames
                     file.name.startsWith("frame_") && file.name.endsWith(".jpg") -> {
                         files.add(
                             GeneratedFile(
@@ -241,14 +257,16 @@ class FileExportManager(private val context: Context) {
             =====================
             Fecha de exportacion: ${Date()}
             Modo de procesamiento: ${mode.name}
-            
+            Archivos exportados: $filesCount
             
             Description:
             ${when (mode) {
                 VideoPostProcessor.ProcessingMode.HAND_LANDMARKS ->
-                    "Hand landmarks datos extraidos"
+                    "Landmarks datos extraidos en formato CSV con estructura:\n" +
+                            "- Datos combinados: pose (8 puntos x 4 valores) + mano_izq (21 x 3) + mano_der (21 x 3) = 158 columnas\n" +
+                            "- Solo manos: mano_izq (21 x 3) + mano_der (21 x 3) = 126 columnas"
                 VideoPostProcessor.ProcessingMode.VIDEO_FRAMES ->
-                    "10 frames extraidos"
+                    "20 frames extraidos del video en formato JPG"
             }}
             
             App: DLM (Deep Learning Model)

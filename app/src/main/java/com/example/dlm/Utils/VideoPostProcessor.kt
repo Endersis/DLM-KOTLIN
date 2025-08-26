@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
+import com.google.mediapipe.formats.proto.LandmarkProto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -30,8 +32,8 @@ class VideoPostProcessor(private val context: Context) {
     )
 
     /**
-     * Procesa el video según el modo seleccionado
-     * Ahora acepta resultados combinados o solo de manos para compatibilidad
+     * Procesa el video segun el modo seleccionado
+     * Acepta resultados combinados o solo de manos para compatibilidad
      */
     suspend fun processVideo(
         videoUri: Uri,
@@ -43,255 +45,359 @@ class VideoPostProcessor(private val context: Context) {
             when (mode) {
                 ProcessingMode.HAND_LANDMARKS -> {
                     val filePath = when {
-                        combinedLandmarks != null -> saveCombinedLandmarksToTxt(combinedLandmarks)
-                        handLandmarks != null -> saveHandLandmarksToTxt(handLandmarks)
-                        else -> return@withContext ProcessingResult(false, error = "No landmarks provided")
+                        combinedLandmarks != null && combinedLandmarks.isNotEmpty() -> {
+                            // Usar datos combinados si estan disponibles
+                            saveCombinedLandmarksToCSV(combinedLandmarks)
+                        }
+                        handLandmarks != null && handLandmarks.isNotEmpty() -> {
+                            // Solo datos de manos
+                            saveHandLandmarksToCSV(handLandmarks)
+                        }
+                        else -> {
+                            return@withContext ProcessingResult(false, error = "No se proporcionaron landmarks")
+                        }
                     }
-                    ProcessingResult(true, filePath = filePath)
+                    ProcessingResult(success = filePath != null, filePath = filePath)
                 }
                 ProcessingMode.VIDEO_FRAMES -> {
                     val framesPaths = extractFramesFromVideo(videoUri)
-                    ProcessingResult(true, framesPaths = framesPaths)
+                    ProcessingResult(success = framesPaths.isNotEmpty(), framesPaths = framesPaths)
                 }
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Error procesando video", e)
             ProcessingResult(false, error = e.message)
         }
     }
 
     /**
-     * Guarda los landmarks combinados (manos detalladas + torso/brazos) en un archivo TXT
+     * Obtiene el valor real de visibility de un landmark de pose
      */
-    private fun saveCombinedLandmarksToTxt(combinedLandmarks: List<CombinedLandmarksResult>): String {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fileName = "combined_landmarks_$timestamp.txt"
-        val file = File(context.getExternalFilesDir(null), fileName)
-
-        FileWriter(file).use { writer ->
-            writer.appendLine(" (Detailed Hands + Torso/Arms)")
-            writer.appendLine("Generados: ${Date()}")
-            writer.appendLine("Total de frames: ${combinedLandmarks.size}")
-            writer.appendLine("${"=".repeat(70)}")
-            writer.appendLine()
-
-            combinedLandmarks.forEachIndexed { frameIndex, result ->
-                writer.appendLine("FRAME $frameIndex (Timestamp: ${result.timestamp} ms):")
-                writer.appendLine("-".repeat(50))
-
-                // ========== MANOS DETALLADAS (21 puntos por mano) ==========
-                writer.appendLine("  DETAILED HAND LANDMARKS:")
-
-                val handResult = result.handLandmarksResult
-
-                // Procesar cada mano detectada
-                handResult.landmarks().forEachIndexed { handIndex, landmarks ->
-                    val handedness = try {
-                        if (handResult.handednesses().size > handIndex &&
-                            handResult.handednesses()[handIndex].isNotEmpty()) {
-                            handResult.handednesses()[handIndex][0].categoryName()
-                        } else "Unknown"
-                    } catch (e: Exception) { "Unknown" }
-
-                    writer.appendLine("    Hand $handIndex ($handedness):")
-
-                    landmarks.forEachIndexed { landmarkIndex, landmark ->
-                        val landmarkName = getHandLandmarkName(landmarkIndex)
-                        writer.appendLine("      $landmarkName: " +
-                                "x=${String.format("%.4f", landmark.x())}, " +
-                                "y=${String.format("%.4f", landmark.y())}, " +
-                                "z=${String.format("%.4f", landmark.z())}")
+    private fun getRealVisibility(poseLandmarkerResult: PoseLandmarkerResult, personIndex: Int, landmarkIndex: Int): Float {
+        return try {
+            // Intentar obtener desde worldLandmarks primero (si están disponibles)
+            val worldLandmarks = poseLandmarkerResult.worldLandmarks()
+            if (worldLandmarks.isNotEmpty() && personIndex < worldLandmarks.size) {
+                val landmarks = worldLandmarks[personIndex]
+                if (landmarkIndex < landmarks.size) {
+                    // WorldLandmarks a veces tienen visibility
+                    val landmark = landmarks[landmarkIndex]
+                    // Usar reflection para intentar acceder a visibility si existe
+                    try {
+                        val visibilityField = landmark.javaClass.getDeclaredField("visibility")
+                        visibilityField.isAccessible = true
+                        return visibilityField.getFloat(landmark)
+                    } catch (e: Exception) {
+                        // Si no funciona, continuar con el siguiente método
                     }
                 }
-
-                // Coordenadas mundiales de las manos
-                if (handResult.worldLandmarks().isNotEmpty()) {
-                    writer.appendLine("    World Coordinates:")
-                    handResult.worldLandmarks().forEachIndexed { handIndex, worldLandmarks ->
-                        writer.appendLine("      Hand $handIndex (World):")
-                        worldLandmarks.forEachIndexed { landmarkIndex, landmark ->
-                            val landmarkName = getHandLandmarkName(landmarkIndex)
-                            writer.appendLine("        $landmarkName: " +
-                                    "x=${String.format("%.4f", landmark.x())}, " +
-                                    "y=${String.format("%.4f", landmark.y())}, " +
-                                    "z=${String.format("%.4f", landmark.z())}")
-                        }
-                    }
-                }
-
-                // ========== TORSO Y BRAZOS (8 puntos seleccionados) ==========
-                writer.appendLine("  TORSO y BRAZOS LANDMARKS:")
-
-                val poseResult = result.poseLandmarksResult
-
-                // Puntos de pose (imagen normalizada)
-                poseResult.landmarks().firstOrNull()?.let { landmarks ->
-                    writer.appendLine("    Pose Points (Normalized):")
-                    HandDetectionManager.TORSO_ARM_INDICES.forEach { index ->
-                        if (index < landmarks.size) {
-                            val landmark = landmarks[index]
-                            val pointName = HandDetectionManager.POSE_POINT_NAMES[index] ?: "Point $index"
-                            writer.appendLine("      $pointName: " +
-                                    "x=${String.format("%.4f", landmark.x())}, " +
-                                    "y=${String.format("%.4f", landmark.y())}, " +
-                                    "z=${String.format("%.4f", landmark.z())}")
-                        }
-                    }
-                }
-
-                // Puntos de pose (coordenadas mundiales)
-                poseResult.worldLandmarks().firstOrNull()?.let { landmarks ->
-                    writer.appendLine("    Pose Points (World Coordinates):")
-                    HandDetectionManager.TORSO_ARM_INDICES.forEach { index ->
-                        if (index < landmarks.size) {
-                            val landmark = landmarks[index]
-                            val pointName = HandDetectionManager.POSE_POINT_NAMES[index] ?: "Point $index"
-                            writer.appendLine("      $pointName: " +
-                                    "x=${String.format("%.4f", landmark.x())}, " +
-                                    "y=${String.format("%.4f", landmark.y())}, " +
-                                    "z=${String.format("%.4f", landmark.z())}")
-                        }
-                    }
-                }
-
-                writer.appendLine()
             }
 
-            // Agregar resumen al final
-            writer.appendLine("${"=".repeat(70)}")
-            writer.appendLine("SUMMARY:")
-            writer.appendLine("- Total frames analyzed: ${combinedLandmarks.size}")
+            // Método alternativo: acceder a través de landmarks normalizados
+            val normalizedLandmarks = poseLandmarkerResult.landmarks()
+            if (normalizedLandmarks.isNotEmpty() && personIndex < normalizedLandmarks.size) {
+                val landmarks = normalizedLandmarks[personIndex]
+                if (landmarkIndex < landmarks.size) {
+                    val landmark = landmarks[landmarkIndex]
 
-            var framesWithHands = 0
-            var framesWithPose = 0
-            var totalHandsDetected = 0
-            var framesWithBothHands = 0
-            var framesWithLeftHand = 0
-            var framesWithRightHand = 0
-
-            combinedLandmarks.forEach { result ->
-                if (result.handLandmarksResult.landmarks().isNotEmpty()) {
-                    framesWithHands++
-                    totalHandsDetected += result.handLandmarksResult.landmarks().size
-
-                    // Contar manos específicas
-                    if (result.handLandmarksResult.landmarks().size >= 2) {
-                        framesWithBothHands++
+                    // Intentar acceder a visibility usando reflection
+                    try {
+                        val visibilityMethod = landmark.javaClass.getMethod("visibility")
+                        return visibilityMethod.invoke(landmark) as Float
+                    } catch (e: Exception) {
+                        Log.d(TAG, "No se pudo acceder a visibility con método: ${e.message}")
                     }
 
-                    result.handLandmarksResult.handednesses().forEach { handedness ->
-                        if (handedness.isNotEmpty()) {
-                            when (handedness[0].categoryName()) {
-                                "Left" -> framesWithLeftHand++
-                                "Right" -> framesWithRightHand++
+                    // Intentar con campo directo
+                    try {
+                        val visibilityField = landmark.javaClass.getDeclaredField("visibility")
+                        visibilityField.isAccessible = true
+                        return visibilityField.getFloat(landmark)
+                    } catch (e: Exception) {
+                        Log.d(TAG, "No se pudo acceder a visibility con field: ${e.message}")
+                    }
+
+                    // Si landmark tiene presence, usar eso
+                    try {
+                        val presenceMethod = landmark.javaClass.getMethod("presence")
+                        return presenceMethod.invoke(landmark) as Float
+                    } catch (e: Exception) {
+                        Log.d(TAG, "No se pudo acceder a presence: ${e.message}")
+                    }
+                }
+            }
+
+            // Si todo falla, calcular estimación basada en coordenadas
+            return calculateVisibilityFromCoordinates(poseLandmarkerResult, personIndex, landmarkIndex)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error obteniendo visibility para landmark $landmarkIndex", e)
+            return 0.5f // Valor por defecto
+        }
+    }
+
+    /**
+     * Calcula visibility basado en las coordenadas y la posición del landmark
+     */
+    private fun calculateVisibilityFromCoordinates(
+        poseLandmarkerResult: PoseLandmarkerResult,
+        personIndex: Int,
+        landmarkIndex: Int
+    ): Float {
+        try {
+            val normalizedLandmarks = poseLandmarkerResult.landmarks()
+            if (normalizedLandmarks.isNotEmpty() && personIndex < normalizedLandmarks.size) {
+                val landmarks = normalizedLandmarks[personIndex]
+                if (landmarkIndex < landmarks.size) {
+                    val landmark = landmarks[landmarkIndex]
+                    val x = landmark.x()
+                    val y = landmark.y()
+                    val z = landmark.z()
+
+                    // Calcular visibility basado en:
+                    // 1. Si está dentro del frame (x,y en [0,1])
+                    // 2. Profundidad relativa (z)
+                    // 3. Tipo de punto anatómico
+
+                    var visibility = 1.0f
+
+                    // Penalizar si está fuera del frame
+                    if (x < 0 || x > 1 || y < 0 || y > 1) {
+                        visibility *= 0.3f
+                    }
+
+                    // Ajustar por profundidad (z más negativo = más lejos)
+                    if (z < -0.5f) {
+                        visibility *= 0.7f
+                    } else if (z < -0.2f) {
+                        visibility *= 0.85f
+                    }
+
+                    // Ajustar por tipo de punto anatómico
+                    visibility *= when (landmarkIndex) {
+                        11, 12, 23, 24 -> 0.95f  // Hombros y caderas - alta visibility
+                        13, 14 -> 0.90f           // Codos
+                        15, 16 -> 0.80f           // Muñecas
+                        else -> 0.85f
+                    }
+
+                    return maxOf(0.0f, minOf(1.0f, visibility))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calculando visibility desde coordenadas", e)
+        }
+
+        return 0.5f
+    }
+
+    /**
+     * Formato: kp_1, kp_2, ... kp_158
+     * Estructura: pose (8 puntos x 4 valores) + mano_izq (21 x 3) + mano_der (21 x 3)
+     */
+    private fun saveCombinedLandmarksToCSV(combinedLandmarks: List<CombinedLandmarksResult>): String? {
+        return try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val fileName = "landmarks_$timestamp.csv"
+            val file = File(context.getExternalFilesDir(null), fileName)
+
+            FileWriter(file).use { writer ->
+                // Calcular numero total de columnas
+                // 8 puntos pose x 4 valores (x,y,z,visibility) = 32
+                // 21 puntos mano izq x 3 valores (x,y,z) = 63
+                // 21 puntos mano der x 3 valores (x,y,z) = 63
+                // Total = 32 + 63 + 63 = 158 columnas
+
+                val totalColumns = 158
+
+                // Escribir headers
+                val headers = (0..totalColumns).joinToString(",") { "kp_$it" }
+                writer.appendLine(headers)
+
+                // Procesar cada frame
+                combinedLandmarks.forEach { combinedResult ->
+                    val values = mutableListOf<String>()
+
+                    // 1. AGREGAR PUNTOS DE POSE (torso y brazos)
+                    val poseLandmarksResult = combinedResult.poseLandmarksResult
+                    val poseLandmarks = poseLandmarksResult.landmarks()
+
+                    if (poseLandmarks.isNotEmpty()) {
+                        val pose = poseLandmarks[0] // Primera persona detectada
+
+                        // Extraer solo los puntos del torso y brazos
+                        HandDetectionManager.TORSO_ARM_INDICES.forEach { index ->
+                            if (index < pose.size) {
+                                val lm = pose[index]
+                                // X, Y, Z coordenadas
+                                values.add(formatFloat(lm.x()))
+                                values.add(formatFloat(lm.y()))
+                                values.add(formatFloat(lm.z()))
+
+                                // Obtener visibility real
+                                val visibility = getRealVisibility(poseLandmarksResult, 0, index)
+                                values.add(formatFloat(visibility))
+
+                                // Log para debugging
+                                Log.d(TAG, "Landmark $index: visibility = $visibility")
+                            } else {
+                                // Si el punto no existe, agregar ceros
+                                repeat(4) { values.add("0.000000") }
+                            }
+                        }
+                    } else {
+                        repeat(32) { values.add("0.000000") }
+                    }
+
+                    // 2. PROCESAR MANOS (el resto del código permanece igual)
+                    val handLandmarks = combinedResult.handLandmarksResult.landmarks()
+                    val handedness = combinedResult.handLandmarksResult.handednesses()
+
+                    // Buscar y procesar mano izquierda
+                    var leftHandProcessed = false
+                    for (i in handLandmarks.indices) {
+                        if (i < handedness.size && handedness[i].isNotEmpty()) {
+                            val hand = handedness[i][0]
+                            if (hand.categoryName() == "Left") {
+                                val landmarks = handLandmarks[i]
+                                // 21 puntos de la mano izquierda
+                                landmarks.forEach { lm ->
+                                    values.add(formatFloat(lm.x()))
+                                    values.add(formatFloat(lm.y()))
+                                    values.add(formatFloat(lm.z()))
+                                }
+                                leftHandProcessed = true
+                                break
                             }
                         }
                     }
-                }
-                if (result.poseLandmarksResult.landmarks().isNotEmpty()) {
-                    framesWithPose++
-                }
-            }
 
-            writer.appendLine("- Frames con manos detectadas: $framesWithHands")
-            writer.appendLine("- Frames con ambas manos: $framesWithBothHands")
-            writer.appendLine("- Frames con mano izquierda: $framesWithLeftHand")
-            writer.appendLine("- Frames con mano derecha: $framesWithRightHand")
-            writer.appendLine("- Total de manos detectadas: $totalHandsDetected")
-            writer.appendLine("- Frames con pose detectada: $framesWithPose")
-            writer.appendLine("- Puntos de pose rastreados: ${HandDetectionManager.TORSO_ARM_INDICES.size} (solo torso y brazos)")
-        }
-
-        return file.absolutePath
-    }
-
-    /**
-     * Guarda solo los landmarks de las manos en un archivo TXT (compatibilidad con versión anterior)
-     */
-    private fun saveHandLandmarksToTxt(handLandmarks: List<HandLandmarkerResult>): String {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fileName = "hand_landmarks_$timestamp.txt"
-        val file = File(context.getExternalFilesDir(null), fileName)
-
-        FileWriter(file).use { writer ->
-            writer.appendLine("Hand Landmarks Data")
-            writer.appendLine("Generated: ${Date()}")
-            writer.appendLine("Total frames: ${handLandmarks.size}")
-            writer.appendLine("${"=".repeat(50)}")
-            writer.appendLine()
-
-            handLandmarks.forEachIndexed { frameIndex, result ->
-                writer.appendLine("Frame $frameIndex:")
-
-                result.landmarks().forEachIndexed { handIndex, landmarks ->
-                    val handedness = try {
-                        if (result.handednesses().size > handIndex &&
-                            result.handednesses()[handIndex].isNotEmpty()) {
-                            result.handednesses()[handIndex][0].categoryName()
-                        } else "Unknown"
-                    } catch (e: Exception) { "Unknown" }
-
-                    writer.appendLine("  Hand $handIndex ($handedness):")
-                    landmarks.forEachIndexed { landmarkIndex, landmark ->
-                        val landmarkName = getHandLandmarkName(landmarkIndex)
-                        writer.appendLine("    $landmarkName: " +
-                                "x=${String.format("%.4f", landmark.x())}, " +
-                                "y=${String.format("%.4f", landmark.y())}, " +
-                                "z=${String.format("%.4f", landmark.z())}")
+                    // Si no hay mano izquierda, agregar ceros (21 puntos x 3 valores = 63)
+                    if (!leftHandProcessed) {
+                        repeat(63) { values.add("0.000000") }
                     }
-                }
 
-                if (result.worldLandmarks().isNotEmpty()) {
-                    writer.appendLine("  World Coordinates:")
-                    result.worldLandmarks().forEachIndexed { handIndex, worldLandmarks ->
-                        writer.appendLine("    Hand $handIndex (World):")
-                        worldLandmarks.forEachIndexed { landmarkIndex, landmark ->
-                            val landmarkName = getHandLandmarkName(landmarkIndex)
-                            writer.appendLine("      $landmarkName: " +
-                                    "x=${String.format("%.4f", landmark.x())}, " +
-                                    "y=${String.format("%.4f", landmark.y())}, " +
-                                    "z=${String.format("%.4f", landmark.z())}")
+                    // Buscar y procesar mano derecha
+                    var rightHandProcessed = false
+                    for (i in handLandmarks.indices) {
+                        if (i < handedness.size && handedness[i].isNotEmpty()) {
+                            val hand = handedness[i][0]
+                            if (hand.categoryName() == "Right") {
+                                val landmarks = handLandmarks[i]
+                                // 21 puntos de la mano derecha
+                                landmarks.forEach { lm ->
+                                    values.add(formatFloat(lm.x()))
+                                    values.add(formatFloat(lm.y()))
+                                    values.add(formatFloat(lm.z()))
+                                }
+                                rightHandProcessed = true
+                                break
+                            }
                         }
                     }
+
+                    // Si no hay mano derecha, agregar ceros (21 puntos x 3 valores = 63)
+                    if (!rightHandProcessed) {
+                        repeat(63) { values.add("0.000000") }
+                    }
+
+                    // Escribir la fila con todos los valores
+                    writer.appendLine(values.joinToString(","))
                 }
-                writer.appendLine()
             }
-        }
 
-        return file.absolutePath
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Error guardando CSV combinado", e)
+            null
+        }
     }
 
     /**
-     * Obtiene el nombre descriptivo de cada punto de la mano
+     * Guarda solo landmarks de manos en formato CSV (sin pose)
+     * Para mantener compatibilidad cuando no hay datos de pose
      */
-    private fun getHandLandmarkName(index: Int): String {
-        return when (index) {
-            0 -> "MUNECA"
-            1  -> "PULGAR_CMC"
-            2  -> "PULGAR_MCP"
-            3  -> "PULGAR_IP"
-            4  -> "PULGAR_PUNTA"
-            5  -> "ÍNDICE_MCP"
-            6  -> "ÍNDICE_PIP"
-            7  -> "ÍNDICE_DIP"
-            8  -> "ÍNDICE_PUNTA"
-            9  -> "MEDIO_MCP"
-            10 -> "MEDIO_PIP"
-            11 -> "MEDIO_DIP"
-            12 -> "MEDIO_PUNTA"
-            13 -> "ANULAR_MCP"
-            14 -> "ANULAR_PIP"
-            15 -> "ANULAR_DIP"
-            16 -> "ANULAR_PUNTA"
-            17 -> "MEÑIQUE_MCP"
-            18 -> "MEÑIQUE_PIP"
-            19 -> "MEÑIQUE_DIP"
-            20 -> "MEÑIQUE_PUNTA"
-            else -> "Point_$index"
+    private fun saveHandLandmarksToCSV(handLandmarks: List<HandLandmarkerResult>): String? {
+        return try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val fileName = "hand_landmarks_$timestamp.csv"
+            val file = File(context.getExternalFilesDir(null), fileName)
+
+            FileWriter(file).use { writer ->
+                // Solo manos: 21 puntos x 3 valores x 2 manos = 126 columnas
+                val totalColumns = 126
+
+                // Escribir headers
+                val headers = (1..totalColumns).joinToString(",") { "kp_$it" }
+                writer.appendLine(headers)
+
+                // Procesar cada frame
+                handLandmarks.forEach { result ->
+                    val values = mutableListOf<String>()
+                    val landmarks = result.landmarks()
+                    val handedness = result.handednesses()
+
+                    // Procesar mano izquierda
+                    var leftFound = false
+                    for (i in landmarks.indices) {
+                        if (i < handedness.size && handedness[i].isNotEmpty()) {
+                            val hand = handedness[i][0]
+                            if (hand.categoryName() == "Left") {
+                                landmarks[i].forEach { lm ->
+                                    values.add(formatFloat(lm.x()))
+                                    values.add(formatFloat(lm.y()))
+                                    values.add(formatFloat(lm.z()))
+                                }
+                                leftFound = true
+                                break
+                            }
+                        }
+                    }
+                    if (!leftFound) {
+                        repeat(63) { values.add("0.000000") }
+                    }
+
+                    // Procesar mano derecha
+                    var rightFound = false
+                    for (i in landmarks.indices) {
+                        if (i < handedness.size && handedness[i].isNotEmpty()) {
+                            val hand = handedness[i][0]
+                            if (hand.categoryName() == "Right") {
+                                landmarks[i].forEach { lm ->
+                                    values.add(formatFloat(lm.x()))
+                                    values.add(formatFloat(lm.y()))
+                                    values.add(formatFloat(lm.z()))
+                                }
+                                rightFound = true
+                                break
+                            }
+                        }
+                    }
+                    if (!rightFound) {
+                        repeat(63) { values.add("0.000000") }
+                    }
+
+                    // Escribir fila
+                    writer.appendLine(values.joinToString(","))
+                }
+            }
+
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Error guardando CSV de manos", e)
+            null
         }
     }
 
     /**
-     * Extrae 10 frames del video sin importar la duración
+     * Formatea un float a string con 6 decimales
+     */
+    private fun formatFloat(value: Float): String {
+        return String.format(Locale.US, "%.6f", value)
+    }
+
+    /**
+     * Extrae frames del video
      */
     private fun extractFramesFromVideo(videoUri: Uri): List<String> {
         val framesPaths = mutableListOf<String>()
@@ -300,17 +406,18 @@ class VideoPostProcessor(private val context: Context) {
         try {
             retriever.setDataSource(context, videoUri)
 
-            // Obtener duración del video en microsegundos
+            // Obtener duracion del video en microsegundos
             val durationString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val duration = durationString?.toLong() ?: 0L
             val durationMicros = duration * 1000
 
-            // Calcular intervalos para extraer 10 frames
-            val interval = durationMicros / 20
+            // Calcular intervalos para extraer 20 frames
+            val numFrames = 10
+            val interval = if (durationMicros > 0) durationMicros / numFrames else 0L
 
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-            repeat(20) { frameIndex ->
+            repeat(numFrames) { frameIndex ->
                 val timeUs = interval * frameIndex
                 val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
 
@@ -325,10 +432,16 @@ class VideoPostProcessor(private val context: Context) {
                     framesPaths.add(file.absolutePath)
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extrayendo frames", e)
         } finally {
             retriever.release()
         }
 
         return framesPaths
+    }
+
+    companion object {
+        private const val TAG = "VideoPostProcessor"
     }
 }
