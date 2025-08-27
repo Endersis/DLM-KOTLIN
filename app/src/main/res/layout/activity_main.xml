@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#F5E6D3"
-    tools:context=".MainActivity">
+    tools:context=".ui.MainActivity">
 
     <!-- Logo que cubre toda la pantalla y es clickeable -->
     <ImageView
@@ -29,5 +29,4 @@
         android:textStyle="bold"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="60dp" />
-
 </FrameLayout>

@@ -13,7 +13,15 @@
         <!-- Status bar color -->
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
         <!-- Customize your theme here -->
+
+
+
+
+       <item name="android:navigationBarColor">@android:color/transparent</item> <item name="android:windowLightStatusBar">true</item> <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:fitsSystemWindows">false</item>
     </style>
+
 
     <!-- Tema para la pantalla splash -->
     <style name="Theme.DLM.Splash" parent="Theme.MaterialComponents.DayNight.NoActionBar">
@@ -21,4 +29,17 @@
         <item name="android:statusBarColor">@color/beige</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <style name="Theme.DLM.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <style name="Theme.DLM.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+
+    <style name="Theme.DLM.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+        <style name="NavMenuItemTextAppearance" parent="TextAppearance.AppCompat.Title">
+            <item name="android:textSize">18sp</item>
+            <item name="android:textColor">@color/black</item>
+        </style>
 </resources>
