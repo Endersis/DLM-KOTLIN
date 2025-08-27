@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("kotlin-parcelize")
 }
 
 android {
@@ -39,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        viewBinding = true
     }
     packagingOptions {
         pickFirst("**/libc++_shared.so")
@@ -57,6 +59,8 @@ dependencies {
     implementation("androidx.camera:camera-video:1.3.0")
     implementation("androidx.camera:camera-view:1.3.0")
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+    // En build.gradle.kts (Module :app)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.3") // O la versión más reciente
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -69,6 +73,18 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
+    implementation(libs.androidx.lifecycle.livedata.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.navigation.fragment.ktx)
+    implementation(libs.androidx.navigation.ui.ktx)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1")
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.9.0")
+    implementation("com.github.bumptech.glide:glide:4.12.0")
+    implementation("com.amazonaws:aws-android-sdk-s3:2.26.0")
+    implementation("com.amazonaws:aws-android-sdk-core:2.26.0")
+    annotationProcessor("com.github.bumptech.glide:compiler:4.12.0")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

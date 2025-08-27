@@ -1,11 +1,11 @@
-package com.example.dlm
+package com.example.dlm.ui
 
 import android.content.Intent
 import android.os.Bundle
 import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import androidx.appcompat.app.AppCompatActivity
-import com.example.dlm.ui.LoginActivity
+import com.example.dlm.R
 
 class MainActivity : AppCompatActivity() {
 
@@ -29,5 +29,6 @@ class MainActivity : AppCompatActivity() {
             // Animación de transición suave
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
+
     }
 }
