@@ -1,4 +1,4 @@
-package com.example.dlm.Utils
+package com.example.dlm.manager
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -9,7 +9,6 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
@@ -38,27 +37,36 @@ class HandDetectionManager(private val context: Context) {
     var onCombinedLandmarksDetected: ((CombinedLandmarksResult) -> Unit)? = null
     var onHandsDetectionChanged: ((Boolean) -> Unit)? = null
 
-    // Índices de puntos de pose que queremos capturar (torso y brazos)
     companion object {
-        // Puntos del torso y brazos según MediaPipe Pose
-        val TORSO_ARM_INDICES = listOf(
-            11, 12, // Hombros (izquierdo y derecho)
-            13, 14, // Codos (izquierdo y derecho)
-            15, 16, // Muñecas (izquierdo y derecho)
-            23, 24  // Caderas (izquierdo y derecho) - parte del torso
-        )
+        // TODOS los 33 puntos de MediaPipe Pose (índices 0-32)
+        // Usaremos todos los puntos disponibles
+        val ALL_POSE_INDICES = (0..16).toList()
 
         val POSE_POINT_NAMES = mapOf(
+            // Cara
+            0 to "Nariz",
+            1 to "Ojo Interno Izquierdo",
+            2 to "Ojo Izquierdo",
+            3 to "Ojo Externo Izquierdo",
+            4 to "Ojo Interno Derecho",
+            5 to "Ojo Derecho",
+            6 to "Ojo Externo Derecho",
+            7 to "Oreja Izquierda",
+            8 to "Oreja Derecha",
+            9 to "Boca Izquierda",
+            10 to "Boca Derecha",
+
+            // Torso y brazos
             11 to "Hombro Izquierdo",
             12 to "Hombro Derecho",
             13 to "Codo Izquierdo",
             14 to "Codo Derecho",
             15 to "Muñeca Izquierda",
             16 to "Muñeca Derecha",
-            23 to "Cadera Izquierda",
-            24 to "Cadera Derecha"
 
         )
+
+
     }
 
     init {

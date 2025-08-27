@@ -1,7 +1,6 @@
-package com.example.dlm
+package com.example.dlm.Utils.Mediapipe
 
 import android.Manifest
-import com.example.dlm.Utils.CombinedLandmarksResult
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -9,7 +8,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -22,9 +20,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.example.dlm.Utils.HandDetectionManager
-import com.example.dlm.Utils.RecordingManager
-import com.example.dlm.Utils.VideoPostProcessor
+import com.example.dlm.R
+import com.example.dlm.manager.HandDetectionManager
+import com.example.dlm.manager.RecordingManager
 import com.example.dlm.managers.VideoRecordingManager
 import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.delay

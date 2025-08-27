@@ -1,7 +1,6 @@
-package com.example.dlm
+package com.example.dlm.Utils.Mediapipe
 
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -13,8 +12,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.dlm.Utils.FileExportManager
-import com.example.dlm.Utils.VideoPostProcessor
+import com.example.dlm.R
+import com.example.dlm.manager.FileExportManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch

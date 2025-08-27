@@ -29,7 +29,7 @@
             android:name=".SignupActivity"
             android:exported="false" />
         <activity
-            android:name=".CameraActivity"
+            android:name=".Utils.Mediapipe.CameraActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="sensor"
             android:exported="false" />
@@ -47,9 +47,14 @@
             android:name=".ui.LoginActivity"
             android:exported="false" />
         <activity
-            android:name=".FilesActivity"
+            android:name=".Utils.Mediapipe.FilesActivity"
             android:exported="false"
             android:theme="@style/Theme.DLM" />
+        <activity
+            android:name=".profile.ProfileActivity"
+            android:exported="false"
+            android:theme="@style/Theme.DLM"
+            />
 
         <provider
             android:name="androidx.core.content.FileProvider"

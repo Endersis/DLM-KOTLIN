@@ -9,11 +9,12 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.dlm.CameraActivity
+import com.example.dlm.Utils.Mediapipe.CameraActivity
 import com.example.dlm.R
 import com.example.dlm.SignupActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
+import com.example.dlm.profile.ProfileActivity
 
 class LoginActivity : AppCompatActivity() {
 
@@ -51,8 +52,6 @@ class LoginActivity : AppCompatActivity() {
         }
 
         googleLoginButton.setOnClickListener {
-            // PRUEBA: Ir directamente a la cámara con MediaPipe
-            Toast.makeText(this, "Abriendo cámara con MediaPipe", Toast.LENGTH_SHORT).show()
 
             // Verificar permisos primero
             if (checkCameraPermissions()) {
@@ -114,7 +113,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun navigateToCamera() {
-        val intent = Intent(this, CameraActivity::class.java)
+        val intent = Intent(this, ProfileActivity::class.java)
         startActivity(intent)
     }
 

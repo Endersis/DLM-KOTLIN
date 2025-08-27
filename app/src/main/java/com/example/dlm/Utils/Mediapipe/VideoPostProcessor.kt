@@ -1,14 +1,13 @@
-package com.example.dlm.Utils
+package com.example.dlm.Utils.Mediapipe
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
-import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
+import com.example.dlm.manager.CombinedLandmarksResult
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
-import com.google.mediapipe.formats.proto.LandmarkProto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,7 +38,8 @@ class VideoPostProcessor(private val context: Context) {
         videoUri: Uri,
         mode: ProcessingMode,
         handLandmarks: List<HandLandmarkerResult>? = null,
-        combinedLandmarks: List<CombinedLandmarksResult>? = null
+        combinedLandmarks: List<CombinedLandmarksResult>? = null,
+        frameTimestamps: List<Long>? = null // Nuevo parámetro para timestamps de frames
     ): ProcessingResult = withContext(Dispatchers.IO) {
         try {
             when (mode) {
@@ -47,11 +47,11 @@ class VideoPostProcessor(private val context: Context) {
                     val filePath = when {
                         combinedLandmarks != null && combinedLandmarks.isNotEmpty() -> {
                             // Usar datos combinados si estan disponibles
-                            saveCombinedLandmarksToCSV(combinedLandmarks)
+                            saveCombinedLandmarksToCSV(combinedLandmarks, frameTimestamps, videoUri)
                         }
                         handLandmarks != null && handLandmarks.isNotEmpty() -> {
                             // Solo datos de manos
-                            saveHandLandmarksToCSV(handLandmarks)
+                            saveHandLandmarksToCSV(handLandmarks, frameTimestamps)
                         }
                         else -> {
                             return@withContext ProcessingResult(false, error = "No se proporcionaron landmarks")
@@ -192,111 +192,143 @@ class VideoPostProcessor(private val context: Context) {
     }
 
     /**
-     * Formato: kp_1, kp_2, ... kp_158
-     * Estructura: pose (8 puntos x 4 valores) + mano_izq (21 x 3) + mano_der (21 x 3)
+     * Guarda los landmarks combinados (manos + pose) en formato CSV
+     * Incluye columna timestamp basado en el tiempo del video (empezando desde 0)
+     * Estructura: timestamp + pose (0..16 → 17 puntos x 4 valores) + mano_izq (21 x 3) + mano_der (21 x 3)
      */
-    private fun saveCombinedLandmarksToCSV(combinedLandmarks: List<CombinedLandmarksResult>): String? {
+    private fun saveCombinedLandmarksToCSV(
+        combinedLandmarks: List<CombinedLandmarksResult>,
+        frameTimestamps: List<Long>? = null,
+        videoUri: Uri? = null // Nuevo parámetro para obtener FPS automáticamente
+    ): String? {
         return try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val fileName = "landmarks_$timestamp.csv"
             val file = File(context.getExternalFilesDir(null), fileName)
 
             FileWriter(file).use { writer ->
-                // Calcular numero total de columnas
-                // 8 puntos pose x 4 valores (x,y,z,visibility) = 32
-                // 21 puntos mano izq x 3 valores (x,y,z) = 63
-                // 21 puntos mano der x 3 valores (x,y,z) = 63
-                // Total = 32 + 63 + 63 = 158 columnas
-
-                val totalColumns = 158
+                // Pose: 17 puntos x 4 valores = 68
+                // Mano izquierda: 21 x 3 = 63
+                // Mano derecha: 21 x 3 = 63
+                // +1 columna extra para timestamp
+                val totalColumns = 1 + 68 + 63 + 63 // = 195
 
                 // Escribir headers
-                val headers = (0..totalColumns).joinToString(",") { "kp_$it" }
+                val headers = buildList {
+                    add("timestamp_ms") // Cambiar nombre para claridad
+                    for (i in 0 until totalColumns - 1) {
+                        add("kp_$i")
+                    }
+                }.joinToString(",")
                 writer.appendLine(headers)
 
+                // Calcular timestamps relativos si no se proporcionan
+                val videoTimestamps = if (frameTimestamps != null && frameTimestamps.size == combinedLandmarks.size) {
+                    frameTimestamps
+                } else {
+                    // Obtener FPS real del video si está disponible
+                    val realFPS = if (videoUri != null) {
+                        getVideoFPS(videoUri)
+                    } else {
+                        30.0f // FPS por defecto
+                    }
+
+                    Log.d(TAG, "Usando FPS: $realFPS para generar timestamps")
+                    val frameDurationMs = 1000.0 / realFPS
+                    combinedLandmarks.indices.map { frameIndex ->
+                        (frameIndex * frameDurationMs).toLong()
+                    }
+                }
+
                 // Procesar cada frame
-                combinedLandmarks.forEach { combinedResult ->
+                combinedLandmarks.forEachIndexed { frameIndex, combinedResult ->
                     val values = mutableListOf<String>()
 
-                    // 1. AGREGAR PUNTOS DE POSE (torso y brazos)
+                    // Agregar timestamp del video (relativo desde el inicio)
+                    val videoTimestamp = videoTimestamps.getOrNull(frameIndex) ?: (frameIndex * 33L) // Fallback
+                    values.add(videoTimestamp.toString())
+
+                    // ---------- POSE ----------
                     val poseLandmarksResult = combinedResult.poseLandmarksResult
                     val poseLandmarks = poseLandmarksResult.landmarks()
 
                     if (poseLandmarks.isNotEmpty()) {
                         val pose = poseLandmarks[0] // Primera persona detectada
 
-                        // Extraer solo los puntos del torso y brazos
-                        HandDetectionManager.TORSO_ARM_INDICES.forEach { index ->
+                        // Solo usar índices 0 al 16
+                        (0..16).forEach { index ->
                             if (index < pose.size) {
                                 val lm = pose[index]
-                                // X, Y, Z coordenadas
-                                values.add(formatFloat(lm.x()))
-                                values.add(formatFloat(lm.y()))
-                                values.add(formatFloat(lm.z()))
-
-                                // Obtener visibility real
                                 val visibility = getRealVisibility(poseLandmarksResult, 0, index)
-                                values.add(formatFloat(visibility))
 
-                                // Log para debugging
-                                Log.d(TAG, "Landmark $index: visibility = $visibility")
+                                if (visibility > 0.3f) {
+                                    values.add(formatFloat(lm.x()))
+                                    values.add(formatFloat(lm.y()))
+                                    values.add(formatFloat(lm.z()))
+                                    values.add(formatFloat(visibility))
+                                } else {
+                                    repeat(4) { values.add("0.000000") }
+                                }
                             } else {
-                                // Si el punto no existe, agregar ceros
                                 repeat(4) { values.add("0.000000") }
                             }
                         }
                     } else {
-                        repeat(32) { values.add("0.000000") }
+                        // Si no hay pose detectada, rellenar con ceros (68 valores)
+                        repeat(68) { values.add("0.000000") }
                     }
 
-                    // 2. PROCESAR MANOS (el resto del código permanece igual)
+                    // ---------- MANO IZQUIERDA ----------
                     val handLandmarks = combinedResult.handLandmarksResult.landmarks()
                     val handedness = combinedResult.handLandmarksResult.handednesses()
 
-                    // Buscar y procesar mano izquierda
                     var leftHandProcessed = false
                     for (i in handLandmarks.indices) {
                         if (i < handedness.size && handedness[i].isNotEmpty()) {
                             val hand = handedness[i][0]
                             if (hand.categoryName() == "Left") {
                                 val landmarks = handLandmarks[i]
-                                // 21 puntos de la mano izquierda
-                                landmarks.forEach { lm ->
-                                    values.add(formatFloat(lm.x()))
-                                    values.add(formatFloat(lm.y()))
-                                    values.add(formatFloat(lm.z()))
+                                for (j in 0 until 21) {
+                                    if (j < landmarks.size) {
+                                        val lm = landmarks[j]
+                                        values.add(formatFloat(lm.x()))
+                                        values.add(formatFloat(lm.y()))
+                                        values.add(formatFloat(lm.z()))
+                                    } else {
+                                        repeat(3) { values.add("0.000000") }
+                                    }
                                 }
                                 leftHandProcessed = true
                                 break
                             }
                         }
                     }
-
-                    // Si no hay mano izquierda, agregar ceros (21 puntos x 3 valores = 63)
                     if (!leftHandProcessed) {
                         repeat(63) { values.add("0.000000") }
                     }
 
-                    // Buscar y procesar mano derecha
+                    // ---------- MANO DERECHA ----------
                     var rightHandProcessed = false
                     for (i in handLandmarks.indices) {
                         if (i < handedness.size && handedness[i].isNotEmpty()) {
                             val hand = handedness[i][0]
                             if (hand.categoryName() == "Right") {
                                 val landmarks = handLandmarks[i]
-                                // 21 puntos de la mano derecha
-                                landmarks.forEach { lm ->
-                                    values.add(formatFloat(lm.x()))
-                                    values.add(formatFloat(lm.y()))
-                                    values.add(formatFloat(lm.z()))
+                                for (j in 0 until 21) {
+                                    if (j < landmarks.size) {
+                                        val lm = landmarks[j]
+                                        values.add(formatFloat(lm.x()))
+                                        values.add(formatFloat(lm.y()))
+                                        values.add(formatFloat(lm.z()))
+                                    } else {
+                                        repeat(3) { values.add("0.000000") }
+                                    }
                                 }
                                 rightHandProcessed = true
                                 break
                             }
                         }
                     }
-
-                    // Si no hay mano derecha, agregar ceros (21 puntos x 3 valores = 63)
                     if (!rightHandProcessed) {
                         repeat(63) { values.add("0.000000") }
                     }
@@ -317,23 +349,46 @@ class VideoPostProcessor(private val context: Context) {
      * Guarda solo landmarks de manos en formato CSV (sin pose)
      * Para mantener compatibilidad cuando no hay datos de pose
      */
-    private fun saveHandLandmarksToCSV(handLandmarks: List<HandLandmarkerResult>): String? {
+    private fun saveHandLandmarksToCSV(
+        handLandmarks: List<HandLandmarkerResult>,
+        frameTimestamps: List<Long>? = null
+    ): String? {
         return try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val fileName = "hand_landmarks_$timestamp.csv"
             val file = File(context.getExternalFilesDir(null), fileName)
 
             FileWriter(file).use { writer ->
-                // Solo manos: 21 puntos x 3 valores x 2 manos = 126 columnas
-                val totalColumns = 126
+                // Solo manos: 21 puntos x 3 valores x 2 manos = 126 columnas + timestamp
+                val totalColumns = 1 + 126
 
                 // Escribir headers
-                val headers = (1..totalColumns).joinToString(",") { "kp_$it" }
+                val headers = buildList {
+                    add("timestamp_ms")
+                    for (i in 0 until totalColumns - 1) {
+                        add("kp_$i")
+                    }
+                }.joinToString(",")
                 writer.appendLine(headers)
 
+                // Calcular timestamps si no se proporcionan
+                val videoTimestamps = if (frameTimestamps != null && frameTimestamps.size == handLandmarks.size) {
+                    frameTimestamps
+                } else {
+                    val frameDurationMs = 1000.0 / 30.0 // 30 FPS por defecto
+                    handLandmarks.indices.map { frameIndex ->
+                        (frameIndex * frameDurationMs).toLong()
+                    }
+                }
+
                 // Procesar cada frame
-                handLandmarks.forEach { result ->
+                handLandmarks.forEachIndexed { frameIndex, result ->
                     val values = mutableListOf<String>()
+
+                    // Agregar timestamp del video
+                    val videoTimestamp = videoTimestamps.getOrNull(frameIndex) ?: (frameIndex * 33L)
+                    values.add(videoTimestamp.toString())
+
                     val landmarks = result.landmarks()
                     val handedness = result.handednesses()
 
@@ -397,7 +452,8 @@ class VideoPostProcessor(private val context: Context) {
     }
 
     /**
-     * Extrae frames del video
+     * Extrae frames del video sin limitar FPS
+     * Ahora extrae todos los frames disponibles según la duración del video
      */
     private fun extractFramesFromVideo(videoUri: Uri): List<String> {
         val framesPaths = mutableListOf<String>()
@@ -406,23 +462,30 @@ class VideoPostProcessor(private val context: Context) {
         try {
             retriever.setDataSource(context, videoUri)
 
-            // Obtener duracion del video en microsegundos
+            // Obtener información del video
             val durationString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            val duration = durationString?.toLong() ?: 0L
-            val durationMicros = duration * 1000
+            val frameRateString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
 
-            // Calcular intervalos para extraer 20 frames
-            val numFrames = 10
-            val interval = if (durationMicros > 0) durationMicros / numFrames else 0L
+            val duration = durationString?.toLong() ?: 0L // duración en ms
+            val frameRate = frameRateString?.toFloat() ?: 30f // FPS del video
+
+            // Calcular número total de frames basado en FPS nativo
+            val totalFrames = ((duration / 1000.0) * frameRate).toInt()
+            val frameDurationMs = 1000.0 / frameRate // duración de cada frame en ms
 
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-            repeat(numFrames) { frameIndex ->
-                val timeUs = interval * frameIndex
-                val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            Log.d(TAG, "Video: ${duration}ms, ${frameRate}fps, ${totalFrames} frames totales")
+
+            // Extraer todos los frames usando el FPS nativo
+            repeat(totalFrames) { frameIndex ->
+                val timeMs = (frameIndex * frameDurationMs).toLong()
+                val timeMicros = timeMs * 1000
+
+                val bitmap = retriever.getFrameAtTime(timeMicros, MediaMetadataRetriever.OPTION_CLOSEST)
 
                 bitmap?.let {
-                    val fileName = "frame_${timestamp}_${frameIndex}.jpg"
+                    val fileName = "frame_${timestamp}_${String.format("%04d", frameIndex)}.jpg"
                     val file = File(context.getExternalFilesDir(null), fileName)
 
                     FileOutputStream(file).use { out ->
@@ -430,6 +493,11 @@ class VideoPostProcessor(private val context: Context) {
                     }
 
                     framesPaths.add(file.absolutePath)
+
+                    // Log progreso cada 100 frames
+                    if (frameIndex % 100 == 0) {
+                        Log.d(TAG, "Extraído frame $frameIndex/$totalFrames")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -438,7 +506,36 @@ class VideoPostProcessor(private val context: Context) {
             retriever.release()
         }
 
+        Log.d(TAG, "Extraídos ${framesPaths.size} frames en total")
         return framesPaths
+    }
+
+    /**
+     * Función auxiliar para obtener timestamps de video basados en FPS
+     * Útil cuando procesas el video frame por frame
+     */
+    fun generateVideoTimestamps(totalFrames: Int, fps: Float = 30f): List<Long> {
+        val frameDurationMs = 1000.0 / fps
+        return (0 until totalFrames).map { frameIndex ->
+            (frameIndex * frameDurationMs).toLong()
+        }
+    }
+
+    /**
+     * Función para obtener FPS del video
+     */
+    fun getVideoFPS(videoUri: Uri): Float {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, videoUri)
+            val frameRateString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+            frameRateString?.toFloat() ?: 30f
+        } catch (e: Exception) {
+            Log.e(TAG, "Error obteniendo FPS del video", e)
+            30f // FPS por defecto
+        } finally {
+            retriever.release()
+        }
     }
 
     companion object {
