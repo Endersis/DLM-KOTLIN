@@ -19,10 +19,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.dlm.R
 import com.example.dlm.api.RetrofitClient
-import com.example.dlm.models.Usuario
-import com.example.dlm.UsuarioDestacado
 import com.example.dlm.models.UsuariosResponse
-import com.example.dlm.UsuarioDestacadoAdapter // Tu adaptador
 import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.launch
 import retrofit2.Response

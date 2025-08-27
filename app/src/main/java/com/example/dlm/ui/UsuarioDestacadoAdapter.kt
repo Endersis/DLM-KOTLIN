@@ -1,5 +1,5 @@
 // com.example.dlm/UsuarioDestacadoAdapter.kt
-package com.example.dlm
+package com.example.dlm.ui
 
 import android.view.LayoutInflater
 import android.view.View
@@ -8,6 +8,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.example.dlm.R
 
 // Asegúrate de que este modelo de datos esté en el mismo archivo o sea accesible
 data class UsuarioDestacado(
